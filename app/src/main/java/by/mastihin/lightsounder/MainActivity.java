@@ -1,100 +1,74 @@
 package by.mastihin.lightsounder;
 
-import android.hardware.Sensor;
-import android.hardware.SensorEvent;
-import android.hardware.SensorEventListener;
-import android.hardware.SensorManager;
+import android.app.Activity;
 import android.media.AudioFormat;
 import android.media.AudioManager;
 import android.media.AudioTrack;
-import android.os.Handler;
-import android.support.v7.app.AppCompatActivity;
+import android.os.AsyncTask;
 import android.os.Bundle;
+import android.view.View;
+import android.view.View.OnClickListener;
+import android.widget.Button;
 
-public class MainActivity extends AppCompatActivity implements SensorEventListener {
+public class MainActivity extends Activity implements OnClickListener {
+    Button startSound;
+    Button endSound;
 
-    private final int sampleRate = 8000;
-    private final int numSamples = 1000;
-    private final double sample[] = new double[numSamples];
-    private double freqOfTone = 440; // hz
-
-    private SensorManager sensorManager;
-    private Sensor lightSensor;
-
-    private final byte generatedSnd[] = new byte[2 * numSamples];
-
-    Handler handler = new Handler();
+    AudioSynthesisTask audioSynth;
+    boolean keepGoing = false;
+    float synth_frequency = 440; // 440 Hz, Middle A
 
     @Override
-    protected void onCreate(Bundle savedInstanceState) {
+    public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
-
-        sensorManager = (SensorManager)getSystemService(SENSOR_SERVICE);
-        lightSensor = sensorManager.getDefaultSensor(Sensor.TYPE_LIGHT);
+        startSound = (Button) this.findViewById(R.id.start_sound);
+        startSound.setOnClickListener(this);
+        endSound = (Button) this.findViewById(R.id.end_sound);
+        endSound.setOnClickListener(this);
+        endSound.setEnabled(false);
     }
 
     @Override
-    protected void onResume() {
-        super.onResume();
-        // Use a new tread as this can take a while
-        final Thread thread = new Thread(new Runnable() {
-            public void run() {
-
-                handler.post(new Runnable() {
-
-                    public void run() {
-                        while(true){
-                            genTone();
-                            playSound();
-                        }
-                    }
-                });
-            }
-        });
-
-        thread.start();
-    }
-
-    protected void onPause() {
+    public void onPause() {
         super.onPause();
-        sensorManager.unregisterListener(this); //Отключаемся от сенсора
+        keepGoing = false;
+        endSound.setEnabled(false);
+        startSound.setEnabled(true);
     }
 
-
-    @Override
-    public void onSensorChanged(SensorEvent event) {
-        float luxLevel = event.values[0];
-        freqOfTone = 440 * (double)luxLevel;
-    }
-
-    @Override
-    public void onAccuracyChanged(Sensor sensor, int i) {
-
-    }
-
-    void genTone(){
-        // fill out the array
-        for (int i = 0; i < numSamples; ++i) {
-            sample[i] = Math.sin(2 * Math.PI * i / (sampleRate/freqOfTone));
-        }
-
-        // convert to 16 bit pcm sound array
-        // assumes the sample buffer is normalised.
-        int idx = 0;
-        for (final double dVal : sample) {
-            // scale to maximum amplitude
-            final short val = (short) ((dVal * 32767));
-            // in 16 bit wav PCM, first byte is the low order byte
-            generatedSnd[idx++] = (byte) (val & 0x00ff);
-            generatedSnd[idx++] = (byte) ((val & 0xff00) >>> 8);
-
+    public void onClick(View v) {
+        if (v == startSound) {
+            keepGoing = true;
+            audioSynth = new AudioSynthesisTask();
+            audioSynth.execute();
+            endSound.setEnabled(true);
+            startSound.setEnabled(false);
+        } else if (v == endSound) {
+            keepGoing = false;
+            endSound.setEnabled(false);
+            startSound.setEnabled(true);
         }
     }
 
-    void playSound(){
-        final AudioTrack audioTrack = new AudioTrack(AudioManager.STREAM_MUSIC, sampleRate, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT, generatedSnd.length, AudioTrack.MODE_STATIC);
-        audioTrack.write(generatedSnd, 0, generatedSnd.length);
-        audioTrack.play();
+    private class AudioSynthesisTask extends AsyncTask {
+        @Override
+        protected Object doInBackground(Object[] objects) {
+            final int SAMPLE_RATE = 11025;
+            int minSize = AudioTrack.getMinBufferSize(SAMPLE_RATE, AudioFormat.CHANNEL_CONFIGURATION_MONO, AudioFormat.ENCODING_PCM_16BIT);
+            AudioTrack audioTrack = new AudioTrack(AudioManager.STREAM_MUSIC, SAMPLE_RATE, AudioFormat.CHANNEL_CONFIGURATION_MONO, AudioFormat.ENCODING_PCM_16BIT, minSize, AudioTrack.MODE_STREAM);
+            audioTrack.play();
+            short[] buffer = new short[minSize];
+            float angular_frequency = (float) (2 * Math.PI) * synth_frequency / SAMPLE_RATE;
+            float angle = 0;
+            while (keepGoing) {
+                for (int i = 0; i < buffer.length; i++) {
+                    buffer[i] = (short) (Short.MAX_VALUE * ((float) Math.sin(angle)));
+                    angle += angular_frequency;
+                }
+                audioTrack.write(buffer, 0, buffer.length);
+            }
+            return null;
+        }
     }
 }
